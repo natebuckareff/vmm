@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use anyhow::Result;
 use base_62::base62;
 use rand_core::{OsRng, TryRngCore};
@@ -5,45 +7,53 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
-pub struct MachineId(u128);
+pub struct Id(u128);
 
-impl MachineId {
+impl Id {
     pub fn new() -> Result<Self> {
         let mut bytes = [0u8; 16];
         OsRng
             .try_fill_bytes(&mut bytes)
             .map_err(|e| anyhow::anyhow!(e))?;
-        Ok(MachineId(u128::from_be_bytes(bytes)))
+        Ok(Id(u128::from_be_bytes(bytes)))
     }
 }
 
-impl Into<String> for MachineId {
+impl Into<String> for Id {
     fn into(self) -> String {
         base62::encode(&self.0.to_be_bytes())
     }
 }
 
-impl Into<String> for &MachineId {
+impl Into<String> for &Id {
     fn into(self) -> String {
         base62::encode(&self.0.to_be_bytes())
     }
 }
 
-impl ToString for MachineId {
+impl ToString for Id {
     fn to_string(&self) -> String {
         self.into()
     }
 }
 
-impl TryFrom<String> for MachineId {
-    type Error = anyhow::Error;
+impl FromStr for Id {
+    type Err = anyhow::Error;
 
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        let id = base62::decode(&value).map_err(|e| anyhow::anyhow!(e))?;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let id = base62::decode(s).map_err(|e| anyhow::anyhow!(e))?;
         let bytes: [u8; 16] = id
             .try_into()
             .map_err(|_| anyhow::anyhow!("invalid base62 string"))?;
         let id = u128::from_be_bytes(bytes);
-        Ok(MachineId(id))
+        Ok(Id(id))
+    }
+}
+
+impl TryFrom<String> for Id {
+    type Error = anyhow::Error;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::from_str(&value)
     }
 }
