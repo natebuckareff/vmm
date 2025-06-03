@@ -80,3 +80,9 @@ pub fn delete_bridge_device(name: &str) -> Result<()> {
     cmd_success("ip", &["link", "delete", &name])?;
     Ok(())
 }
+
+pub fn get_mac(id: &Id) -> String {
+    let id: [u8; 16] = id.into();
+    let id = &id[id.len() - 3..];
+    format!("52:54:00:{:02x}:{:02x}:{:02x}", id[0], id[1], id[2])
+}

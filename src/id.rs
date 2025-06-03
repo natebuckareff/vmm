@@ -31,6 +31,18 @@ impl Into<String> for &Id {
     }
 }
 
+impl Into<[u8; 16]> for Id {
+    fn into(self) -> [u8; 16] {
+        self.0.to_be_bytes()
+    }
+}
+
+impl Into<[u8; 16]> for &Id {
+    fn into(self) -> [u8; 16] {
+        self.0.to_be_bytes()
+    }
+}
+
 impl ToString for Id {
     fn to_string(&self) -> String {
         self.into()

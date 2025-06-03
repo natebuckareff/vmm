@@ -20,7 +20,7 @@ use crate::{
     id::Id,
     net::{
         create_bridge_device, create_tap_device, delete_bridge_device, delete_tap_device,
-        get_bridge_name, get_tap_name,
+        get_bridge_name, get_mac, get_tap_name,
     },
 };
 
@@ -203,7 +203,7 @@ impl Supervisor {
         let cpus = machine_config.cpus.to_string();
         let iso = machine_config.iso.to_string_lossy();
         let boot = machine_config.boot.to_string_lossy();
-        let mac = format!("52:54:00:{:02x}:{:02x}:{:02x}", 0, 0, 0);
+        let mac = get_mac(&id);
         let net_device = format!("virtio-net-pci,netdev={tap},mac={mac}");
         let netdev = format!("tap,id={tap},ifname={tap},script=no");
         let iso_drive: String = format!("file={iso},media=cdrom");
