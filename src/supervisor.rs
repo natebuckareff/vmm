@@ -205,7 +205,7 @@ impl Supervisor {
         let boot = machine_config.boot.to_string_lossy();
         let mac = format!("52:54:00:{:02x}:{:02x}:{:02x}", 0, 0, 0);
         let net_device = format!("virtio-net-pci,netdev={tap},mac={mac}");
-        let netdev = format!("tap,id={tap},ifname=${tap},script=no");
+        let netdev = format!("tap,id={tap},ifname={tap},script=no");
         let iso_drive: String = format!("file={iso},media=cdrom");
         let boot_drive: String = format!(
             "file={},if=virtio,cache=writeback,discard=ignore,format=qcow2",
