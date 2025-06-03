@@ -203,8 +203,8 @@ impl Supervisor {
         let cpus = machine_config.cpus.to_string();
         let iso = machine_config.iso.to_string_lossy();
         let boot = machine_config.boot.to_string_lossy();
-        let mac = format!("{}:{}:{}:{}:{}:{}", 0, 0, 0, 0, 0, 0);
-        let net_device = format!("\"virtio-net-pci,netdev={tap},mac={mac}\"");
+        let mac = format!("52:54:00:{:02x}:{:02x}:{:02x}", 0, 0, 0);
+        let net_device = format!("virtio-net-pci,netdev={tap},mac={mac}");
         let netdev = format!("tap,id={tap},ifname=${tap},script=no");
         let iso_drive: String = format!("file={iso},media=cdrom");
         let boot_drive: String = format!(
@@ -214,9 +214,9 @@ impl Supervisor {
 
         #[rustfmt::skip]
         let mut cmdline: Vec<String> = vec![
-            "-machine type=pc,accel=kvm".into(),
-            "-boot d".into(),
-            "-m".into(), memory,
+            "-machine".into(), "type=pc,accel=kvm".into(),
+            "-boot".into(), "d".into(),
+            "-m".into(), memory.clone() + "B",
             "-smp".into(), cpus,
             "-device".into(), net_device,
             "-netdev".into(), netdev,
@@ -234,13 +234,22 @@ impl Supervisor {
             let socket = format!("/tmp/vmm-virtiofs-{}-{}.sock", id.to_string(), tag);
 
             let chardev = format!("socket,id=char-{tag},path={socket}");
-            let drive = format!("vhost-user-fs-pci,chardev=char-{tag},tag={tag}");
+            let drive = format!("vhost-user-fs-pci,queue-size=1024,chardev=char-{tag},tag={tag}");
+            let shm = "/dev/shm";
+            let mem = format!("memory-backend-file,id=mem,size={memory}B,mem-path={shm},share=on");
+            let numa = format!("node,memdev=mem");
 
             cmdline.push("-chardev".into());
             cmdline.push(chardev);
 
-            cmdline.push("-drive".into());
+            cmdline.push("-device".into());
             cmdline.push(drive);
+
+            cmdline.push("-object".into());
+            cmdline.push(mem);
+
+            cmdline.push("-numa".into());
+            cmdline.push(numa);
 
             let log_sender = self.log_sender.as_ref().unwrap().clone();
             let child = self.spawn_virtiofs_server(id, &tag, &path, log_sender, &mut handles)?;
@@ -282,7 +291,6 @@ impl Supervisor {
             "--socket-path", &socket,
             "--shared-dir", &path,
             "--tag", tag,
-            "--cache=passthrough",
         ];
 
         // TODO: why is this not on path?
