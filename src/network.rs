@@ -7,12 +7,13 @@ use tokio::process::Command;
 
 use crate::{ctx::HasDirs, id::Id, instance::Instance};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct NetworkConfig {
-    name: String,
-    ip: Ipv4Net,
+    pub name: String,
+    pub ip: Ipv4Net,
 }
 
+#[derive(Debug, Clone)]
 pub struct Network {
     id: Id,
     config: NetworkConfig,
@@ -57,6 +58,14 @@ impl Network {
             .context(id)?;
 
         Ok(Self { id, config })
+    }
+
+    pub fn id(&self) -> &Id {
+        &self.id
+    }
+
+    pub fn config(&self) -> &NetworkConfig {
+        &self.config
     }
 
     pub async fn set_bridge_up_or_create(&self) -> Result<()> {

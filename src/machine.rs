@@ -17,7 +17,7 @@ use crate::{
     logger::{LogLine, LogSource, LogStream},
 };
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MachineConfig {
     pub name: String,
     pub cpus: u8,
@@ -28,7 +28,7 @@ pub struct MachineConfig {
     pub network: MachineNetworkConfig,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MachineUserConfig {
     pub name: String,
     pub ssh_authorized_keys: Vec<String>,
@@ -58,7 +58,7 @@ impl MachineUserConfig {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MachineNetworkConfig {
     pub id: Id,
     pub interface: MachineInterfaceConfig,
@@ -72,13 +72,13 @@ impl MachineNetworkConfig {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum MachineInterfaceConfig {
     Static(MachineStaticNetworkConfig),
     // Dhcp(MachineDhcpNetworkConfig),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MachineStaticNetworkConfig {
     pub interface: String,
     pub ip: Ipv4Net,
@@ -127,6 +127,7 @@ impl MachineStaticNetworkConfig {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Machine {
     id: Id,
     config: MachineConfig,

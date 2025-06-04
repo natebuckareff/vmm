@@ -9,7 +9,7 @@ use crate::{
     text_table::TextTable,
 };
 
-pub fn run_cli(args: Args) -> Result<()> {
+pub async fn run_cli(args: Args) -> Result<()> {
     match args.command {
         Command::Machine { command } => match command {
             MachineCommand::List => {

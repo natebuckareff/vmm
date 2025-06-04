@@ -27,9 +27,15 @@ impl LogLine {
         }
     }
 
-    pub fn instance(id: Id, stream: LogStream, source: LogSource, line: String) -> Self {
+    pub fn instance(
+        id: Id,
+        boot_seq: u64,
+        stream: LogStream,
+        source: LogSource,
+        line: String,
+    ) -> Self {
         Self {
-            id: LogId::Instance(id),
+            id: LogId::Instance(id, boot_seq),
             when: SystemTime::now(),
             stream,
             source,
@@ -40,7 +46,7 @@ impl LogLine {
 
 pub enum LogId {
     Machine(Id),
-    Instance(Id),
+    Instance(Id, u64),
 }
 
 pub enum LogStream {
@@ -86,30 +92,43 @@ impl Logger {
     pub fn log(&self, log: LogLine) -> Result<()> {
         // TODO: can speed this up by caching log files
 
-        let path = match log.id {
+        let (path, seq) = match log.id {
             LogId::Machine(id) => {
                 let path = self.dirs.get_machine_log_dir(id)?;
                 fs::create_dir_all(&path)?;
-                path
+                (path, None)
             }
-            LogId::Instance(id) => {
+            LogId::Instance(id, seq) => {
                 let path = self.dirs.get_instance_log_dir(id)?;
                 fs::create_dir_all(&path)?;
-                path
+                (path, Some(seq))
             }
         };
 
         let days_since_epoch = log.when.duration_since(UNIX_EPOCH)?.as_secs() / 86_400;
 
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path.join(format!(
-                "{}.{}.{}",
-                log.source.as_ref(),
-                days_since_epoch,
-                log.stream.as_ref(),
-            )))?;
+        let mut file = match seq {
+            Some(boot_seq) => OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path.join(format!(
+                    "{}.{}-{}.{}",
+                    log.source.as_ref(),
+                    days_since_epoch,
+                    boot_seq,
+                    log.stream.as_ref(),
+                )))?,
+
+            None => OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path.join(format!(
+                    "{}.{}.{}",
+                    log.source.as_ref(),
+                    days_since_epoch,
+                    log.stream.as_ref(),
+                )))?,
+        };
 
         file.write_all(log.line.as_bytes())?;
 

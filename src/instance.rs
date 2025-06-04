@@ -1,6 +1,7 @@
 use std::process::Stdio;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
+use serde::{Deserialize, Serialize};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     process::{Child, Command},
@@ -16,8 +17,17 @@ use crate::{
     share_dir::ShareDir,
 };
 
+#[derive(Debug, Serialize, Deserialize)]
+struct InstanceState {
+    id: Id,
+    boot_seq: u64,
+    machine_id: Id,
+    network_id: Id,
+}
+
 pub struct Instance {
     id: Id,
+    boot_seq: u64,
     machine: Machine,
     network: Network,
     share_dirs: Vec<ShareDir>,
@@ -25,22 +35,111 @@ pub struct Instance {
 }
 
 impl Instance {
-    pub fn new(id: Id, machine: Machine, network: Network) -> Result<Self> {
-        let mut share_dirs = vec![];
-        for path in machine.config().share_dirs.iter() {
-            let share_dir = ShareDir::new(id, &machine, path.clone())
-                .context("failed to create share dir")
-                .context(id)?;
-            share_dirs.push(share_dir);
+    pub async fn new<Ctx: HasDirs>(
+        ctx: &Ctx,
+        id: Id,
+        machine: Machine,
+        network: Network,
+    ) -> Result<Self> {
+        let state = InstanceState {
+            id,
+            boot_seq: 0,
+            machine_id: machine.id().clone(),
+            network_id: network.id().clone(),
+        };
+
+        let instance_state_path = ctx.dirs().get_instance_state_file_path(id)?;
+
+        if instance_state_path.exists() {
+            bail!(
+                "instance state file already exists: {}",
+                instance_state_path.display()
+            );
         }
+
+        let state_text = serde_json::to_string(&state)
+            .context("failed to serialize instance state")
+            .context(id)?;
+
+        tokio::fs::write(instance_state_path, state_text)
+            .await
+            .context("failed to write instance state")
+            .context(id)?;
+
+        let share_dirs = Self::init_share_dirs(&machine, id, 0)?;
 
         Ok(Self {
             id,
+            boot_seq: 0,
             machine,
             network,
             share_dirs,
             qemu: None,
         })
+    }
+
+    pub async fn read<Ctx: HasDirs>(ctx: &Ctx, id: Id) -> Result<Self> {
+        let instance_state_path = ctx.dirs().get_instance_state_file_path(id)?;
+
+        if !instance_state_path.exists() {
+            bail!(
+                "instance state file not found: {}",
+                instance_state_path.display()
+            );
+        }
+
+        let state_text = tokio::fs::read_to_string(&instance_state_path)
+            .await
+            .context("failed to read instance state")
+            .context(id)?;
+
+        let mut state: InstanceState = serde_json::from_str(&state_text)
+            .context("failed to parse instance state")
+            .context(id)?;
+
+        state.boot_seq += 1;
+        let boot_seq = state.boot_seq;
+
+        let state_text = serde_json::to_string(&state)
+            .context("failed to serialize instance state")
+            .context(id)?;
+
+        tokio::fs::write(instance_state_path, state_text)
+            .await
+            .context("failed to write instance state")
+            .context(id)?;
+
+        let machine = Machine::read(ctx, state.machine_id)
+            .await
+            .context("failed to read instance machine")
+            .context(id)?;
+
+        let network = Network::read(ctx, state.network_id)
+            .await
+            .context("failed to read instance network")
+            .context(id)?;
+
+        let share_dirs = Self::init_share_dirs(&machine, id, boot_seq)?;
+
+        Ok(Self {
+            id,
+            boot_seq,
+            machine,
+            network,
+            share_dirs,
+            qemu: None,
+        })
+    }
+
+    fn init_share_dirs(machine: &Machine, id: Id, boot_seq: u64) -> Result<Vec<ShareDir>> {
+        let mut share_dirs = vec![];
+        for path in machine.config().share_dirs.iter() {
+            let share_dir = ShareDir::new(id, boot_seq, &machine, path.clone())
+                .context("failed to create share dir")
+                .context(id)?;
+            share_dirs.push(share_dir);
+        }
+        Ok(share_dirs)
     }
 
     pub fn id(&self) -> &Id {
@@ -49,6 +148,10 @@ impl Instance {
 
     pub fn machine(&self) -> &Machine {
         &self.machine
+    }
+
+    pub fn network(&self) -> &Network {
+        &self.network
     }
 
     pub fn get_mac_address(&self) -> String {
@@ -122,7 +225,7 @@ impl Instance {
         Ok(())
     }
 
-    pub async fn stop<Ctx: HasLogger>(&mut self) -> Result<()> {
+    pub async fn stop(&mut self) -> Result<()> {
         // TODO: timeout
 
         self.stop_qemu().await?;
@@ -149,12 +252,14 @@ impl Instance {
 
         if let Some(stdout) = child.stdout.take() {
             let id = self.id.clone();
+            let boot_seq = self.boot_seq;
             let mut reader = BufReader::new(stdout).lines();
             let logger = ctx.logger().clone();
             let stdout_task = tokio::spawn(async move {
                 while let Ok(Some(line)) = reader.next_line().await {
                     let _ = logger.log(LogLine::instance(
                         id,
+                        boot_seq,
                         LogStream::Stdout,
                         LogSource::Virtiofs,
                         line,

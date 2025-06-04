@@ -18,6 +18,7 @@ use crate::{
 
 pub struct ShareDir {
     instance_id: Id,
+    boot_seq: u64,
     instance_memory: Byte,
     tag: String,
     path: PathBuf,
@@ -26,7 +27,7 @@ pub struct ShareDir {
 }
 
 impl ShareDir {
-    pub fn new(instance_id: Id, machine: &Machine, path: PathBuf) -> Result<Self> {
+    pub fn new(instance_id: Id, boot_seq: u64, machine: &Machine, path: PathBuf) -> Result<Self> {
         let instance_memory = machine.config().memory;
         loop {
             let mut bytes = [0u8; 4];
@@ -34,6 +35,7 @@ impl ShareDir {
             let tag = base_62::encode(&bytes);
             let sharer_dir = Self {
                 instance_id,
+                boot_seq,
                 instance_memory,
                 tag,
                 path: path.clone(),
@@ -111,12 +113,14 @@ impl ShareDir {
 
         if let Some(stdout) = child.stdout.take() {
             let id = self.instance_id.clone();
+            let boot_seq = self.boot_seq;
             let mut reader = BufReader::new(stdout).lines();
             let logger = ctx.logger().clone();
             let stdout_task = tokio::spawn(async move {
                 while let Ok(Some(line)) = reader.next_line().await {
                     let _ = logger.log(LogLine::instance(
                         id,
+                        boot_seq,
                         LogStream::Stdout,
                         LogSource::Virtiofs,
                         line,

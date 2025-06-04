@@ -31,6 +31,71 @@ impl VmmDirs {
         })
     }
 
+    pub fn get_machine_config_ids(&self) -> Result<Vec<Id>> {
+        let paths = fs::read_dir(&self.config_dir.join("machines"))?;
+        let ids = paths
+            .map(|path| {
+                path.unwrap()
+                    .path()
+                    .file_stem()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .parse::<Id>()
+                    .unwrap()
+            })
+            .collect();
+        Ok(ids)
+    }
+
+    pub fn get_network_config_ids(&self) -> Result<Vec<Id>> {
+        let paths = fs::read_dir(&self.config_dir.join("networks"))?;
+        let ids = paths
+            .map(|path| {
+                path.unwrap()
+                    .path()
+                    .file_stem()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .parse::<Id>()
+                    .unwrap()
+            })
+            .collect();
+        Ok(ids)
+    }
+
+    pub fn get_instance_config_ids(&self) -> Result<Vec<Id>> {
+        let paths = fs::read_dir(&self.config_dir.join("instances"))?;
+        let ids = paths
+            .map(|path| {
+                path.unwrap()
+                    .path()
+                    .file_stem()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .parse::<Id>()
+                    .unwrap()
+            })
+            .collect();
+        Ok(ids)
+    }
+
+    pub fn get_instance_state_dir(&self, instance_id: Id) -> Result<PathBuf> {
+        let path = self
+            .state_dir
+            .join("instances")
+            .join(instance_id.to_string());
+        fs::create_dir_all(&path)?;
+        Ok(path)
+    }
+
+    pub fn get_instance_state_file_path(&self, id: Id) -> Result<PathBuf> {
+        let state_path = self.get_instance_state_dir(id)?.join("state.json");
+        Ok(state_path)
+    }
+
     pub fn get_network_config_dir(&self, network_id: Id) -> Result<PathBuf> {
         let path = self
             .config_dir
