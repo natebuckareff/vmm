@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{fmt::Display, str::FromStr};
 
 use anyhow::Result;
 use base_62::base62;
@@ -43,12 +43,6 @@ impl Into<[u8; 16]> for &Id {
     }
 }
 
-impl ToString for Id {
-    fn to_string(&self) -> String {
-        self.into()
-    }
-}
-
 impl FromStr for Id {
     type Err = anyhow::Error;
 
@@ -67,5 +61,11 @@ impl TryFrom<String> for Id {
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
         Self::from_str(&value)
+    }
+}
+
+impl Display for Id {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.to_string().as_str())
     }
 }

@@ -21,6 +21,7 @@ fn cmd_success(cmd: &str, args: &[&str]) -> Result<ExitStatus> {
     }
     Ok(ecode)
 }
+
 pub fn get_bridge_name(id: &Id) -> String {
     let id = id.to_string();
     let id = &id[id.len() - 4..];
