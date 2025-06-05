@@ -21,20 +21,21 @@ pub struct Network {
 
 impl Network {
     pub async fn new<Ctx: HasDirs>(ctx: &Ctx, id: Id, config: NetworkConfig) -> Result<Self> {
-        let config_path = ctx.dirs().get_network_config_dir(id)?;
+        let config_path = ctx.dirs().get_network_config_file_path(id)?;
+
         if config_path.exists() {
-            bail!("network config exists: {}", config_path.display());
+            bail!("network config already exists: {}", config_path.display());
         }
 
-        tokio::fs::create_dir_all(&config_path).await?;
+        if let Some(config_dir) = config_path.parent() {
+            tokio::fs::create_dir_all(config_dir).await?;
+        }
 
-        let config_file_path = config_path.join("config.json");
-
-        let config_text = serde_json::to_string(&config)
+        let config_text = serde_json::to_string_pretty(&config)
             .context("failed to serialize network config")
             .context(id)?;
 
-        tokio::fs::write(config_file_path, config_text)
+        tokio::fs::write(config_path, config_text)
             .await
             .context("failed to write network config")
             .context(id)?;
@@ -44,6 +45,7 @@ impl Network {
 
     pub async fn read<Ctx: HasDirs>(ctx: &Ctx, id: Id) -> Result<Self> {
         let config_path = ctx.dirs().get_network_config_file_path(id)?;
+
         if !config_path.exists() || !config_path.is_file() {
             bail!("network config file not found: {}", config_path.display());
         }

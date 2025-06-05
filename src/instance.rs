@@ -9,7 +9,7 @@ use tokio::{
 };
 
 use crate::{
-    ctx::{HasDirs, HasLogger},
+    ctx::{HasDirs, HasImageManager, HasLogger},
     id::Id,
     logger::{LogLine, LogSource, LogStream},
     machine::Machine,
@@ -57,7 +57,11 @@ impl Instance {
             );
         }
 
-        let state_text = serde_json::to_string(&state)
+        if let Some(state_dir) = instance_state_path.parent() {
+            tokio::fs::create_dir_all(state_dir).await?;
+        }
+
+        let state_text = serde_json::to_string_pretty(&state)
             .context("failed to serialize instance state")
             .context(id)?;
 
@@ -160,7 +164,10 @@ impl Instance {
         format!("52:54:00:{:02x}:{:02x}:{:02x}", id[0], id[1], id[2])
     }
 
-    async fn get_qemu_args<Ctx: HasDirs + HasLogger>(&self, ctx: &Ctx) -> Result<Vec<String>> {
+    async fn get_qemu_args<Ctx: HasDirs + HasLogger + HasImageManager>(
+        &mut self,
+        ctx: &Ctx,
+    ) -> Result<Vec<String>> {
         // TODO: could cache if the config has not changed
 
         let memory = self.machine.config().memory.as_u64().to_string();
@@ -206,7 +213,10 @@ impl Instance {
         Ok(args)
     }
 
-    pub async fn start<Ctx: HasDirs + HasLogger>(&mut self, ctx: &Ctx) -> Result<()> {
+    pub async fn start<Ctx: HasDirs + HasLogger + HasImageManager>(
+        &mut self,
+        ctx: &Ctx,
+    ) -> Result<()> {
         // TODO: timeout?
 
         self.network.set_bridge_up_or_create().await?;

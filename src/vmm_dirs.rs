@@ -1,6 +1,6 @@
 use std::{fs, path::PathBuf};
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 use directories::BaseDirs;
 
 use crate::id::Id;
@@ -87,7 +87,6 @@ impl VmmDirs {
             .state_dir
             .join("instances")
             .join(instance_id.to_string());
-        fs::create_dir_all(&path)?;
         Ok(path)
     }
 
@@ -101,7 +100,6 @@ impl VmmDirs {
             .config_dir
             .join("networks")
             .join(network_id.to_string());
-        fs::create_dir_all(&path)?;
         Ok(path)
     }
 
@@ -115,7 +113,6 @@ impl VmmDirs {
             .config_dir
             .join("machines")
             .join(machine_id.to_string());
-        fs::create_dir_all(&path)?;
         Ok(path)
     }
 
@@ -126,7 +123,6 @@ impl VmmDirs {
 
     pub fn get_machine_cache_dir(&self, machine_id: Id) -> Result<PathBuf> {
         let path = self.cache_dir.join("machines").join(machine_id.to_string());
-        fs::create_dir_all(&path)?;
         Ok(path)
     }
 
@@ -136,7 +132,20 @@ impl VmmDirs {
             .join("machines")
             .join(machine_id.to_string())
             .join("logs");
-        fs::create_dir_all(&path)?;
+        Ok(path)
+    }
+
+    pub fn get_image_download_path(&self, download_id: u64) -> Result<PathBuf> {
+        let path = self
+            .cache_dir
+            .join("downloads")
+            .join(download_id.to_string())
+            .with_extension("download");
+        Ok(path)
+    }
+
+    pub fn get_image_cache_path(&self, hash: &str) -> Result<PathBuf> {
+        let path = self.cache_dir.join("images").join(hash);
         Ok(path)
     }
 
@@ -146,7 +155,6 @@ impl VmmDirs {
             .join("instances")
             .join(instance_id.to_string())
             .join("logs");
-        fs::create_dir_all(&path)?;
         Ok(path)
     }
 }

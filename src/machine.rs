@@ -1,10 +1,11 @@
 use std::{net::Ipv4Addr, path::PathBuf, process::Stdio};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use byte_unit::Byte;
 use futures::StreamExt;
 use ipnet::Ipv4Net;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::Command,
@@ -12,8 +13,9 @@ use tokio::{
 use url::Url;
 
 use crate::{
-    ctx::{HasDirs, HasLogger},
+    ctx::{HasDirs, HasImageManager, HasLogger},
     id::Id,
+    image_manager::GetImageResult,
     logger::{LogLine, LogSource, LogStream},
 };
 
@@ -22,10 +24,16 @@ pub struct MachineConfig {
     pub name: String,
     pub cpus: u8,
     pub memory: Byte,
-    pub image: Url,
+    pub image: MachineImageConfig,
     pub share_dirs: Vec<PathBuf>,
     pub user: MachineUserConfig,
     pub network: MachineNetworkConfig,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MachineImageConfig {
+    pub url: Url,
+    pub hash: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -135,20 +143,21 @@ pub struct Machine {
 
 impl Machine {
     pub async fn new<Ctx: HasDirs>(ctx: &Ctx, id: Id, config: MachineConfig) -> Result<Self> {
-        let config_path = ctx.dirs().get_machine_config_dir(id)?;
+        let config_path = ctx.dirs().get_machine_config_file_path(id)?;
+
         if config_path.exists() {
             bail!("machine config exists: {}", config_path.display());
         }
 
-        tokio::fs::create_dir_all(&config_path).await?;
+        if let Some(config_dir) = config_path.parent() {
+            tokio::fs::create_dir_all(config_dir).await?;
+        }
 
-        let config_file_path = config_path.join("config.json");
-
-        let config_text = serde_json::to_string(&config)
+        let config_text = serde_json::to_string_pretty(&config)
             .context("failed to serialize machine config")
             .context(id)?;
 
-        tokio::fs::write(config_file_path, config_text)
+        tokio::fs::write(config_path, config_text)
             .await
             .context("failed to write machine config")
             .context(id)?;
@@ -158,6 +167,7 @@ impl Machine {
 
     pub async fn read<Ctx: HasDirs>(ctx: &Ctx, id: Id) -> Result<Self> {
         let config_path = ctx.dirs().get_machine_config_file_path(id)?;
+
         if !config_path.exists() || !config_path.is_file() {
             bail!("machine config file not found: {}", config_path.display());
         }
@@ -182,46 +192,30 @@ impl Machine {
         &self.config
     }
 
-    pub async fn get_root_image<Ctx: HasDirs + HasLogger>(&self, ctx: &Ctx) -> Result<PathBuf> {
-        let config_path = ctx.dirs().get_machine_config_dir(self.id)?;
-        let boot_image_path = config_path.join("root.qcow2");
-        if boot_image_path.exists() {
-            return Ok(boot_image_path);
+    pub async fn get_root_image<Ctx: HasDirs + HasLogger + HasImageManager>(
+        &mut self,
+        ctx: &Ctx,
+    ) -> Result<PathBuf> {
+        let url = self.config.image.url.clone();
+        let hash = self.config.image.hash.clone();
+
+        let result = ctx.image_manager().get_image(url.clone(), hash).await?;
+
+        match result {
+            GetImageResult::ImageCached(hash) => ctx.dirs().get_image_cache_path(&hash),
+
+            GetImageResult::InconsistentHash(hash) => Err(anyhow!("inconsistent image hashes"))
+                .context(url.clone())
+                .context(hash),
+
+            GetImageResult::DownloadFailed(status_code) => Err(anyhow!("image download failed"))
+                .context(status_code)
+                .context(url.clone()),
+
+            GetImageResult::DownloadFailedToReadChunk => {
+                Err(anyhow!("image download failed to read chunk")).context(url.clone())
+            }
         }
-
-        let client = reqwest::Client::new();
-        let response = client
-            .get(self.config.image.clone())
-            .send()
-            .await
-            .context("failed to download root image")
-            .context(self.id)?;
-
-        let status = response.status();
-        if !status.is_success() {
-            bail!("failed to download root image: {}", status);
-        }
-
-        let mut file = tokio::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .open(boot_image_path.clone())
-            .await
-            .context("failed to open root image")
-            .context(self.id)?;
-
-        let mut stream = response.bytes_stream();
-
-        while let Some(chunk_result) = stream.next().await {
-            // TODO: Should upgrade Logger to support progress events or add a
-            // more generally purpose EventLogger for our own logs
-            let chunk = chunk_result.context("failed to read chunk from response")?;
-            file.write_all(&chunk)
-                .await
-                .context("failed to write chunk to file")?;
-        }
-
-        Ok(boot_image_path)
     }
 
     async fn write_cloud_init_config<Ctx: HasDirs>(&self, ctx: &Ctx) -> Result<()> {

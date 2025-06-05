@@ -1,6 +1,6 @@
 use std::cell::OnceCell;
 
-use crate::{logger::Logger, vmm_dirs::VmmDirs};
+use crate::{image_manager::ImageManagerClient, logger::Logger, vmm_dirs::VmmDirs};
 
 pub trait HasDirs {
     fn dirs(&self) -> &VmmDirs;
@@ -10,16 +10,23 @@ pub trait HasLogger {
     fn logger(&self) -> &Logger;
 }
 
+pub trait HasImageManager {
+    fn image_manager(&self) -> &ImageManagerClient;
+}
+
+#[derive(Clone)]
 pub struct Ctx {
     dirs: OnceCell<VmmDirs>,
     logger: OnceCell<Logger>,
+    image_manager: Option<ImageManagerClient>,
 }
 
 impl Ctx {
-    pub fn new() -> Self {
+    pub fn new(image_manager: Option<ImageManagerClient>) -> Self {
         Self {
             dirs: OnceCell::new(),
             logger: OnceCell::new(),
+            image_manager,
         }
     }
 }
@@ -37,5 +44,13 @@ impl HasLogger for Ctx {
             let dirs = self.dirs().clone();
             Logger::new(dirs)
         })
+    }
+}
+
+impl HasImageManager for Ctx {
+    fn image_manager(&self) -> &ImageManagerClient {
+        self.image_manager
+            .as_ref()
+            .expect("image_mananger not set on context")
     }
 }

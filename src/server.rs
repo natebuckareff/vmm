@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use anyhow::{Context, Result, anyhow, bail};
 
 use crate::{
-    ctx::{HasDirs, HasLogger},
+    ctx::{HasDirs, HasImageManager, HasLogger},
     id::Id,
     instance::Instance,
     machine::{Machine, MachineConfig},
@@ -82,7 +82,7 @@ impl Server {
         &mut self,
         ctx: &Ctx,
         config: MachineConfig,
-    ) -> Result<()> {
+    ) -> Result<Id> {
         let id = loop {
             let id = Id::new()?;
             if !self.machines.contains_key(&id) {
@@ -90,15 +90,15 @@ impl Server {
             }
         };
         let machine = Machine::new(ctx, id, config).await?;
-        self.machines.insert(*machine.id(), machine);
-        Ok(())
+        self.machines.insert(id, machine);
+        Ok(id)
     }
 
     pub async fn create_network<Ctx: HasDirs>(
         &mut self,
         ctx: &Ctx,
         config: NetworkConfig,
-    ) -> Result<()> {
+    ) -> Result<Id> {
         let id = loop {
             let id = Id::new()?;
             if !self.networks.contains_key(&id) {
@@ -106,8 +106,8 @@ impl Server {
             }
         };
         let network = Network::new(ctx, id, config).await?;
-        self.networks.insert(*network.id(), network);
-        Ok(())
+        self.networks.insert(id, network);
+        Ok(id)
     }
 
     pub async fn create_instance<Ctx: HasDirs>(
@@ -115,7 +115,7 @@ impl Server {
         ctx: &Ctx,
         machine_id: Id,
         network_id: Id,
-    ) -> Result<()> {
+    ) -> Result<Id> {
         let id = loop {
             let id = Id::new()?;
             if !self.instances.contains_key(&id) {
@@ -134,12 +134,12 @@ impl Server {
             .ok_or(anyhow::anyhow!("network not found"))?;
 
         let instance = Instance::new(ctx, id, machine.clone(), network.clone()).await?;
-        self.instances.insert(*instance.id(), instance);
+        self.instances.insert(id, instance);
 
-        Ok(())
+        Ok(id)
     }
 
-    pub async fn start_instance<Ctx: HasDirs + HasLogger>(
+    pub async fn start_instance<Ctx: HasDirs + HasLogger + HasImageManager>(
         &mut self,
         ctx: &Ctx,
         id: Id,
