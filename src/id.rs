@@ -66,6 +66,8 @@ impl TryFrom<String> for Id {
 
 impl Display for Id {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.to_string().as_str())
+        let bytes: [u8; 16] = self.0.to_be_bytes();
+        let encoded = base62::encode(&bytes);
+        f.write_str(&encoded)
     }
 }
