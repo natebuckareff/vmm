@@ -65,8 +65,9 @@ impl VmmDirs {
         Ok(ids)
     }
 
-    pub fn get_instance_config_ids(&self) -> Result<Vec<Id>> {
-        let paths = fs::read_dir(&self.config_dir.join("instances"))?;
+    // XXX TODO: do we even use config for instances?
+    pub fn get_instance_state_ids(&self) -> Result<Vec<Id>> {
+        let paths = fs::read_dir(&self.state_dir.join("instances"))?;
         let ids = paths
             .map(|path| {
                 path.unwrap()
@@ -135,10 +136,14 @@ impl VmmDirs {
         Ok(path)
     }
 
+    pub fn get_image_download_dir(&self) -> Result<PathBuf> {
+        let path = self.cache_dir.join("downloads");
+        Ok(path)
+    }
+
     pub fn get_image_download_path(&self, download_id: u64) -> Result<PathBuf> {
         let path = self
-            .cache_dir
-            .join("downloads")
+            .get_image_download_dir()?
             .join(download_id.to_string())
             .with_extension("download");
         Ok(path)

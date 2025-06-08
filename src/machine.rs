@@ -5,7 +5,6 @@ use byte_unit::Byte;
 use futures::StreamExt;
 use ipnet::Ipv4Net;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::Command,
@@ -13,9 +12,9 @@ use tokio::{
 use url::Url;
 
 use crate::{
-    ctx::{HasDirs, HasImageManager, HasLogger},
+    ctx::Ctx,
     id::Id,
-    image_manager::GetImageResult,
+    image_cache::GetImageHashResult,
     logger::{LogLine, LogSource, LogStream},
 };
 
@@ -28,6 +27,49 @@ pub struct MachineConfig {
     pub share_dirs: Vec<PathBuf>,
     pub user: MachineUserConfig,
     pub network: MachineNetworkConfig,
+}
+
+impl MachineConfig {
+    pub async fn open(ctx: &Ctx, id: Id) -> Result<Self> {
+        let config_path = ctx.dirs().get_machine_config_file_path(id)?;
+
+        if !config_path.exists() || !config_path.is_file() {
+            bail!("machine config file not found: {}", config_path.display());
+        }
+
+        let config_text = tokio::fs::read_to_string(config_path)
+            .await
+            .context("failed to read machine config")
+            .context(id)?;
+
+        let config: MachineConfig = serde_json::from_str(&config_text)
+            .context("failed to parse machine config")
+            .context(id)?;
+
+        Ok(config)
+    }
+
+    pub async fn save(&self, ctx: &Ctx, id: Id, create: bool) -> Result<()> {
+        let config_path = ctx.dirs().get_machine_config_file_path(id)?;
+        let config_dir = config_path.parent().ok_or(anyhow!("invalid path"))?;
+
+        if create && config_path.exists() {
+            bail!("machine config exists: {}", config_path.display());
+        }
+
+        tokio::fs::create_dir_all(&config_dir).await?;
+
+        let config_text = serde_json::to_string_pretty(&self)
+            .context("failed to serialize machine config")
+            .context(id)?;
+
+        tokio::fs::write(config_path, config_text)
+            .await
+            .context("failed to write machine config")
+            .context(id)?;
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -142,45 +184,13 @@ pub struct Machine {
 }
 
 impl Machine {
-    pub async fn new<Ctx: HasDirs>(ctx: &Ctx, id: Id, config: MachineConfig) -> Result<Self> {
-        let config_path = ctx.dirs().get_machine_config_file_path(id)?;
-
-        if config_path.exists() {
-            bail!("machine config exists: {}", config_path.display());
-        }
-
-        if let Some(config_dir) = config_path.parent() {
-            tokio::fs::create_dir_all(config_dir).await?;
-        }
-
-        let config_text = serde_json::to_string_pretty(&config)
-            .context("failed to serialize machine config")
-            .context(id)?;
-
-        tokio::fs::write(config_path, config_text)
-            .await
-            .context("failed to write machine config")
-            .context(id)?;
-
+    pub async fn new(ctx: &Ctx, id: Id, config: MachineConfig) -> Result<Self> {
+        config.save(ctx, id, true).await?;
         Ok(Self { id, config })
     }
 
-    pub async fn read<Ctx: HasDirs>(ctx: &Ctx, id: Id) -> Result<Self> {
-        let config_path = ctx.dirs().get_machine_config_file_path(id)?;
-
-        if !config_path.exists() || !config_path.is_file() {
-            bail!("machine config file not found: {}", config_path.display());
-        }
-
-        let config_text = tokio::fs::read_to_string(config_path)
-            .await
-            .context("failed to read machine config")
-            .context(id)?;
-
-        let config: MachineConfig = serde_json::from_str(&config_text)
-            .context("failed to parse machine config")
-            .context(id)?;
-
+    pub async fn open(ctx: &Ctx, id: Id) -> Result<Self> {
+        let config = MachineConfig::open(ctx, id).await?;
         Ok(Self { id, config })
     }
 
@@ -192,39 +202,62 @@ impl Machine {
         &self.config
     }
 
-    pub async fn get_root_image<Ctx: HasDirs + HasLogger + HasImageManager>(
-        &mut self,
-        ctx: &Ctx,
-    ) -> Result<PathBuf> {
+    pub async fn get_root_image(&mut self, ctx: &Ctx) -> Result<PathBuf> {
         let url = self.config.image.url.clone();
-        let hash = self.config.image.hash.clone();
+        let expected_hash = self.config.image.hash.clone();
 
-        let result = ctx.image_manager().get_image(url.clone(), hash).await?;
+        let result = ctx
+            .image_manager()
+            .get_image_hash(ctx, url.clone(), expected_hash.clone())
+            .await?;
 
         match result {
-            GetImageResult::ImageCached(hash) => ctx.dirs().get_image_cache_path(&hash),
+            GetImageHashResult::ImageCached(hash) => {
+                if let Some(expected_hash) = &expected_hash {
+                    if hash != *expected_hash {
+                        return Err(anyhow!("image hash mismatch"))
+                            .context(url.clone())
+                            .context(expected_hash.clone())
+                            .context(hash);
+                    }
+                }
 
-            GetImageResult::InconsistentHash(hash) => Err(anyhow!("inconsistent image hashes"))
-                .context(url.clone())
-                .context(hash),
+                self.config.image.hash = Some(hash.clone());
 
-            GetImageResult::DownloadFailed(status_code) => Err(anyhow!("image download failed"))
-                .context(status_code)
-                .context(url.clone()),
+                self.write_config(ctx).await?;
 
-            GetImageResult::DownloadFailedToReadChunk => {
+                ctx.dirs().get_image_cache_path(&hash)
+            }
+            GetImageHashResult::DownloadNoContentLength => {
+                Err(anyhow!("image download no content length")).context(url.clone())
+            }
+            GetImageHashResult::DownloadFailed(status_code) => {
+                Err(anyhow!("image download failed: {}", status_code)).context(url.clone())
+            }
+            GetImageHashResult::DownloadFailedToReadChunk => {
                 Err(anyhow!("image download failed to read chunk")).context(url.clone())
+            }
+            GetImageHashResult::DownloadCancelled => {
+                Err(anyhow!("image download cancelled")).context(url.clone())
+            }
+            GetImageHashResult::UnknownError => {
+                Err(anyhow!("image download unknown error")).context(url.clone())
             }
         }
     }
 
-    async fn write_cloud_init_config<Ctx: HasDirs>(&self, ctx: &Ctx) -> Result<()> {
+    async fn write_config(&self, ctx: &Ctx) -> Result<()> {
+        self.config.save(ctx, self.id, false).await?;
+        Ok(())
+    }
+
+    async fn write_cloud_init_config(&self, ctx: &Ctx) -> Result<()> {
         self.write_network_cloud_init_config(ctx).await?;
         self.write_user_cloud_init_config(ctx).await?;
         Ok(())
     }
 
-    async fn write_network_cloud_init_config<Ctx: HasDirs>(&self, ctx: &Ctx) -> Result<()> {
+    async fn write_network_cloud_init_config(&self, ctx: &Ctx) -> Result<()> {
         let config_path = ctx.dirs().get_machine_config_dir(self.id)?;
         tokio::fs::create_dir_all(&config_path).await?;
 
@@ -256,7 +289,7 @@ impl Machine {
         Ok(())
     }
 
-    async fn write_user_cloud_init_config<Ctx: HasDirs>(&self, ctx: &Ctx) -> Result<()> {
+    async fn write_user_cloud_init_config(&self, ctx: &Ctx) -> Result<()> {
         let config_path = ctx.dirs().get_machine_config_dir(self.id)?;
         tokio::fs::create_dir_all(&config_path).await?;
 
@@ -288,7 +321,7 @@ impl Machine {
         Ok(())
     }
 
-    pub async fn get_cloud_init_iso<Ctx: HasDirs + HasLogger>(&self, ctx: &Ctx) -> Result<PathBuf> {
+    pub async fn get_cloud_init_iso(&self, ctx: &Ctx) -> Result<PathBuf> {
         let config_path = ctx.dirs().get_machine_config_dir(self.id)?;
         let cloud_init_iso_path = config_path.join("cloud-init.iso");
         if cloud_init_iso_path.exists() {

@@ -8,9 +8,6 @@ use crate::id::Id;
 
 #[derive(Debug, Parser)]
 pub struct Args {
-    #[clap(short, long)]
-    pub config: PathBuf,
-
     #[clap(subcommand)]
     pub command: Command,
 }

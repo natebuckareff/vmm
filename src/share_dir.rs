@@ -10,7 +10,7 @@ use tokio::{
 };
 
 use crate::{
-    ctx::HasLogger,
+    ctx::Ctx,
     id::Id,
     logger::{LogLine, LogSource, LogStream},
     machine::Machine,
@@ -88,7 +88,7 @@ impl ShareDir {
         args
     }
 
-    async fn start_virtiofsd<Ctx: HasLogger>(&mut self, ctx: &Ctx) -> Result<()> {
+    async fn start_virtiofsd(&mut self, ctx: &Ctx) -> Result<()> {
         assert!(self.daemon.is_none(), "virtiofsd already running");
 
         let socket_path = self.get_socket_path().to_string_lossy();
@@ -152,7 +152,7 @@ impl ShareDir {
         Ok(())
     }
 
-    pub async fn start<Ctx: HasLogger>(&mut self, ctx: &Ctx) -> Result<bool> {
+    pub async fn start(&mut self, ctx: &Ctx) -> Result<bool> {
         if self.daemon.is_some() {
             return Ok(false);
         }

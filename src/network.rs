@@ -1,11 +1,11 @@
 use std::{process::ExitStatus, time::Duration};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use ipnet::Ipv4Net;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
-use crate::{ctx::HasDirs, id::Id, instance::Instance};
+use crate::{ctx::Ctx, id::Id, instance::Instance};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct NetworkConfig {
@@ -13,37 +13,8 @@ pub struct NetworkConfig {
     pub ip: Ipv4Net,
 }
 
-#[derive(Debug, Clone)]
-pub struct Network {
-    id: Id,
-    config: NetworkConfig,
-}
-
-impl Network {
-    pub async fn new<Ctx: HasDirs>(ctx: &Ctx, id: Id, config: NetworkConfig) -> Result<Self> {
-        let config_path = ctx.dirs().get_network_config_file_path(id)?;
-
-        if config_path.exists() {
-            bail!("network config already exists: {}", config_path.display());
-        }
-
-        if let Some(config_dir) = config_path.parent() {
-            tokio::fs::create_dir_all(config_dir).await?;
-        }
-
-        let config_text = serde_json::to_string_pretty(&config)
-            .context("failed to serialize network config")
-            .context(id)?;
-
-        tokio::fs::write(config_path, config_text)
-            .await
-            .context("failed to write network config")
-            .context(id)?;
-
-        Ok(Self { id, config })
-    }
-
-    pub async fn read<Ctx: HasDirs>(ctx: &Ctx, id: Id) -> Result<Self> {
+impl NetworkConfig {
+    pub async fn open(ctx: &Ctx, id: Id) -> Result<Self> {
         let config_path = ctx.dirs().get_network_config_file_path(id)?;
 
         if !config_path.exists() || !config_path.is_file() {
@@ -59,6 +30,46 @@ impl Network {
             .context("failed to parse network config")
             .context(id)?;
 
+        Ok(config)
+    }
+
+    pub async fn save(&self, ctx: &Ctx, id: Id, create: bool) -> Result<()> {
+        let config_path = ctx.dirs().get_network_config_file_path(id)?;
+        let config_dir = config_path.parent().ok_or(anyhow!("invalid path"))?;
+
+        if create && config_path.exists() {
+            bail!("network config already exists: {}", config_path.display());
+        }
+
+        tokio::fs::create_dir_all(&config_dir).await?;
+
+        let config_text = serde_json::to_string_pretty(&self)
+            .context("failed to serialize network config")
+            .context(id)?;
+
+        tokio::fs::write(config_path, config_text)
+            .await
+            .context("failed to write network config")
+            .context(id)?;
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Network {
+    id: Id,
+    config: NetworkConfig,
+}
+
+impl Network {
+    pub async fn new(ctx: &Ctx, id: Id, config: NetworkConfig) -> Result<Self> {
+        config.save(ctx, id, true).await?;
+        Ok(Self { id, config })
+    }
+
+    pub async fn open(ctx: &Ctx, id: Id) -> Result<Self> {
+        let config = NetworkConfig::open(ctx, id).await?;
         Ok(Self { id, config })
     }
 

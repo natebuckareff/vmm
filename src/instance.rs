@@ -9,7 +9,7 @@ use tokio::{
 };
 
 use crate::{
-    ctx::{HasDirs, HasImageManager, HasLogger},
+    ctx::Ctx,
     id::Id,
     logger::{LogLine, LogSource, LogStream},
     machine::Machine,
@@ -35,12 +35,7 @@ pub struct Instance {
 }
 
 impl Instance {
-    pub async fn new<Ctx: HasDirs>(
-        ctx: &Ctx,
-        id: Id,
-        machine: Machine,
-        network: Network,
-    ) -> Result<Self> {
+    pub async fn new(ctx: &Ctx, id: Id, machine: Machine, network: Network) -> Result<Self> {
         let state = InstanceState {
             id,
             boot_seq: 0,
@@ -82,7 +77,7 @@ impl Instance {
         })
     }
 
-    pub async fn read<Ctx: HasDirs>(ctx: &Ctx, id: Id) -> Result<Self> {
+    pub async fn read(ctx: &Ctx, id: Id) -> Result<Self> {
         let instance_state_path = ctx.dirs().get_instance_state_file_path(id)?;
 
         if !instance_state_path.exists() {
@@ -113,12 +108,12 @@ impl Instance {
             .context("failed to write instance state")
             .context(id)?;
 
-        let machine = Machine::read(ctx, state.machine_id)
+        let machine = Machine::open(ctx, state.machine_id)
             .await
             .context("failed to read instance machine")
             .context(id)?;
 
-        let network = Network::read(ctx, state.network_id)
+        let network = Network::open(ctx, state.network_id)
             .await
             .context("failed to read instance network")
             .context(id)?;
@@ -164,10 +159,7 @@ impl Instance {
         format!("52:54:00:{:02x}:{:02x}:{:02x}", id[0], id[1], id[2])
     }
 
-    async fn get_qemu_args<Ctx: HasDirs + HasLogger + HasImageManager>(
-        &mut self,
-        ctx: &Ctx,
-    ) -> Result<Vec<String>> {
+    async fn get_qemu_args(&mut self, ctx: &Ctx) -> Result<Vec<String>> {
         // TODO: could cache if the config has not changed
 
         let memory = self.machine.config().memory.as_u64().to_string();
@@ -213,24 +205,26 @@ impl Instance {
         Ok(args)
     }
 
-    pub async fn start<Ctx: HasDirs + HasLogger + HasImageManager>(
-        &mut self,
-        ctx: &Ctx,
-    ) -> Result<()> {
+    pub async fn start(&mut self, ctx: &Ctx) -> Result<()> {
         // TODO: timeout?
 
-        self.network.set_bridge_up_or_create().await?;
-        self.network.set_tap_up_or_create(self).await?;
+        // XXX
+        // self.network.set_bridge_up_or_create().await?;
+        // self.network.set_tap_up_or_create(self).await?;
 
-        for share_dir in self.share_dirs.iter_mut() {
-            share_dir.start(ctx).await?;
-        }
+        // XXX
+        // for share_dir in self.share_dirs.iter_mut() {
+        //     share_dir.start(ctx).await?;
+        // }
 
         let qemu_args = self.get_qemu_args(ctx).await?;
 
-        if self.qemu.is_none() {
-            self.start_qemu(ctx, qemu_args).await?;
-        }
+        dbg!(&qemu_args);
+
+        // XXX
+        // if self.qemu.is_none() {
+        //     self.start_qemu(ctx, qemu_args).await?;
+        // }
 
         Ok(())
     }
@@ -247,7 +241,7 @@ impl Instance {
         Ok(())
     }
 
-    async fn start_qemu<Ctx: HasLogger>(&mut self, ctx: &Ctx, args: Vec<String>) -> Result<()> {
+    async fn start_qemu(&mut self, ctx: &Ctx, args: Vec<String>) -> Result<()> {
         assert!(self.qemu.is_none(), "qemu is already running");
 
         let mut child = Command::new("qemu-system-x86_64")

@@ -1,56 +1,66 @@
-use std::cell::OnceCell;
+use tokio_util::sync::CancellationToken;
 
-use crate::{image_manager::ImageManagerClient, logger::Logger, vmm_dirs::VmmDirs};
-
-pub trait HasDirs {
-    fn dirs(&self) -> &VmmDirs;
-}
-
-pub trait HasLogger {
-    fn logger(&self) -> &Logger;
-}
-
-pub trait HasImageManager {
-    fn image_manager(&self) -> &ImageManagerClient;
-}
+use crate::{
+    image_cache::ImageCacheClient, logger::Logger, progress_router::ProgressRouterClient,
+    vmm_dirs::VmmDirs,
+};
 
 #[derive(Clone)]
 pub struct Ctx {
-    dirs: OnceCell<VmmDirs>,
-    logger: OnceCell<Logger>,
-    image_manager: Option<ImageManagerClient>,
+    cancel_token: CancellationToken,
+    dirs: VmmDirs,
+    logger: Logger,
+    image_manager: Option<ImageCacheClient>,
+    progress_router: Option<ProgressRouterClient>,
 }
 
 impl Ctx {
-    pub fn new(image_manager: Option<ImageManagerClient>) -> Self {
+    pub fn new() -> Self {
+        let dirs = VmmDirs::new().expect("failed to initialize vmm dirs");
         Self {
-            dirs: OnceCell::new(),
-            logger: OnceCell::new(),
-            image_manager,
+            cancel_token: CancellationToken::new(),
+            dirs: dirs.clone(),
+            logger: Logger::new(dirs),
+            image_manager: None,
+            progress_router: None,
         }
     }
-}
 
-impl HasDirs for Ctx {
-    fn dirs(&self) -> &VmmDirs {
-        self.dirs
-            .get_or_init(|| VmmDirs::new().expect("failed to initialize vmm dirs"))
+    pub fn with_image_manager(self, image_manager: ImageCacheClient) -> Self {
+        Self {
+            image_manager: Some(image_manager),
+            ..self
+        }
     }
-}
 
-impl HasLogger for Ctx {
-    fn logger(&self) -> &Logger {
-        self.logger.get_or_init(|| {
-            let dirs = self.dirs().clone();
-            Logger::new(dirs)
-        })
+    pub fn with_progress_router(self, progress_router: ProgressRouterClient) -> Self {
+        Self {
+            progress_router: Some(progress_router),
+            ..self
+        }
     }
-}
 
-impl HasImageManager for Ctx {
-    fn image_manager(&self) -> &ImageManagerClient {
+    pub fn cancel_token(&self) -> &CancellationToken {
+        &self.cancel_token
+    }
+
+    pub fn dirs(&self) -> &VmmDirs {
+        &self.dirs
+    }
+
+    pub fn logger(&self) -> &Logger {
+        &self.logger
+    }
+
+    pub fn image_manager(&self) -> &ImageCacheClient {
         self.image_manager
             .as_ref()
             .expect("image_mananger not set on context")
+    }
+
+    pub fn progress_router(&self) -> &ProgressRouterClient {
+        self.progress_router
+            .as_ref()
+            .expect("progress_tracker not set on context")
     }
 }

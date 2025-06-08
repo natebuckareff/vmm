@@ -1,83 +1,87 @@
 use anyhow::{Result, bail};
 use byte_unit::UnitType;
+use clap::Parser;
 
 use crate::{
     args::{Args, Command, MachineCommand, NetworkCommand},
-    config::{Machine, Network, parse_config, write_config},
-    id::Id,
-    supervisor::Supervisor,
+    ctx::Ctx,
+    machine::MachineConfig,
+    network::NetworkConfig,
     text_table::TextTable,
 };
 
-pub async fn run_cli(args: Args) -> Result<()> {
-    match args.command {
-        Command::Machine { command } => match command {
-            MachineCommand::List => {
-                let mut table = TextTable::build()
-                    .add_column("ID")
-                    .add_column("Name")
-                    .add_column("Network")
-                    .add_column("CPUs")
-                    .add_column("Memory")
-                    .add_column("ISO")
-                    .add_column("Boot")
-                    .add_column("Virtiofs")
-                    .done();
+pub struct Cli {
+    ctx: Ctx,
+}
 
-                let config = parse_config(&args.config)?;
+impl Cli {
+    pub fn new() -> Self {
+        Self { ctx: Ctx::new() }
+    }
 
-                for machine in config.machines {
-                    let Some(network) = config.networks.iter().find(|n| n.id == machine.network)
-                    else {
-                        bail!(
-                            "Network with id \"{}\" does not exist",
-                            machine.network.to_string()
-                        )
-                    };
-                    table.push(machine.id.to_string());
-                    table.push(machine.name);
-                    table.push(network.name.clone());
-                    table.push(machine.cpus.to_string());
-                    table.push(
-                        machine
-                            .memory
-                            .get_appropriate_unit(UnitType::Binary)
-                            .to_string(),
-                    );
-                    table.push(machine.iso.to_string_lossy().into());
-                    table.push(machine.boot.to_string_lossy().into());
+    pub async fn run(self) -> Result<()> {
+        let args = Args::parse();
 
-                    if machine.virtiofs.is_empty() {
-                        table.push("".to_string());
-                    } else {
+        match args.command {
+            Command::Machine { command } => match command {
+                MachineCommand::List => {
+                    let mut table = TextTable::build()
+                        .add_column("ID")
+                        .add_column("Name")
+                        .add_column("CPUs")
+                        .add_column("Memory")
+                        .add_column("Image")
+                        .add_column("Share Dirs")
+                        .add_column("Network")
+                        .done();
+
+                    let machine_ids = self.ctx.dirs().get_machine_config_ids()?;
+                    let network_ids = self.ctx.dirs().get_network_config_ids()?;
+
+                    for machine_id in machine_ids {
+                        let machine = MachineConfig::open(&self.ctx, machine_id).await?;
+
+                        let Some(network_id) =
+                            network_ids.iter().find(|id| **id == machine.network.id)
+                        else {
+                            bail!(
+                                "Network with id \"{}\" does not exist",
+                                machine.network.id.to_string()
+                            )
+                        };
+
+                        let network = NetworkConfig::open(&self.ctx, *network_id).await?;
+
+                        table.push(machine_id.to_string());
+                        table.push(machine.name);
+                        table.push(machine.cpus.to_string());
                         table.push(
                             machine
-                                .virtiofs
-                                .iter()
-                                .map(|v| v.to_string_lossy().into_owned())
-                                .collect::<Vec<String>>()
-                                .join(","),
+                                .memory
+                                .get_appropriate_unit(UnitType::Binary)
+                                .to_string(),
                         );
-                    }
-                }
-                table.print();
-            }
+                        table.push(machine.image.url.to_string());
 
-            MachineCommand::Create {
-                name,
-                network,
-                cpus,
-                memory,
-                iso,
-                boot,
-                virtiofs,
-            } => {
-                let mut config = parse_config(&args.config)?;
-                if !config.networks.iter().any(|n| n.id == network) {
-                    anyhow::bail!("Network with id \"{}\" does not exist", network.to_string());
+                        if machine.share_dirs.is_empty() {
+                            table.push("".to_string());
+                        } else {
+                            table.push(
+                                machine
+                                    .share_dirs
+                                    .iter()
+                                    .map(|v| v.to_string_lossy().into_owned())
+                                    .collect::<Vec<String>>()
+                                    .join(","),
+                            );
+                        }
+
+                        table.push(network.name.clone());
+                    }
+                    table.print();
                 }
-                let machine = Machine {
-                    id: Id::new()?,
+
+                MachineCommand::Create {
                     name,
                     network,
                     cpus,
@@ -85,44 +89,26 @@ pub async fn run_cli(args: Args) -> Result<()> {
                     iso,
                     boot,
                     virtiofs,
-                };
-                if config.machines.iter().any(|m| m.name == machine.name) {
-                    anyhow::bail!("Machine with name \"{}\" already exists", machine.name);
+                } => {
+                    todo!()
                 }
-                config.machines.push(machine);
-                write_config(&args.config, config)?;
-            }
-        },
+            },
 
-        Command::Network { command } => match command {
-            NetworkCommand::List => {
-                let config = parse_config(&args.config)?;
-                for network in config.networks {
-                    println!("{}", serde_json::to_string_pretty(&network)?);
+            Command::Network { command } => match command {
+                NetworkCommand::List => {
+                    todo!()
                 }
-            }
 
-            NetworkCommand::Create { name, ip } => {
-                let mut config = parse_config(&args.config)?;
-                let network = Network {
-                    id: Id::new()?,
-                    name,
-                    ip,
-                };
-                if config.networks.iter().any(|n| n.name == network.name) {
-                    anyhow::bail!("Network with name \"{}\" already exists", network.name);
+                NetworkCommand::Create { name, ip } => {
+                    todo!()
                 }
-                config.networks.push(network);
-                write_config(&args.config, config)?;
-            }
-        },
+            },
 
-        Command::Server => {
-            let config = parse_config(&args.config)?;
-            let supervisor = Supervisor::new(config)?;
-            supervisor.run()?;
+            Command::Server => {
+                todo!()
+            }
         }
-    }
 
-    Ok(())
+        Ok(())
+    }
 }
